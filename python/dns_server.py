@@ -1,8 +1,9 @@
 import socket
 
+HOST = "localhost"
+PORT = 2053
+
 def main():
-    HOST = "localhost"
-    PORT = 2053
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
