@@ -70,15 +70,36 @@ fn parse_dns_question(data: &[u8], mut offset: usize) -> Option<(DnsQuestion, us
     Some((DnsQuestion { qname, qtype, qclass }, offset))
 }
 
-fn build_dns_answer() -> Vec<u8> {
+fn build_dns_answer(qtype: u16) -> Vec<u8> {
     let mut answer = Vec::new();
     answer.extend_from_slice(&0xc00c_u16.to_be_bytes());
-    answer.extend_from_slice(&1u16.to_be_bytes()); 
+    answer.extend_from_slice(&qtype.to_be_bytes()); 
     answer.extend_from_slice(&1u16.to_be_bytes()); 
     answer.extend_from_slice(&3600u32.to_be_bytes()); 
-    answer.extend_from_slice(&4u16.to_be_bytes()); 
-    answer.extend_from_slice(&[93, 184, 216, 34]);
+    let rdata = match qtype {
+        1 => vec![93, 184, 216, 34],
+        5 => encode_domain_name("example.com"),
+        15 => {
+            let mut rdata = vec![0, 10];
+            rdata.extend_from_slice(&encode_domain_name("mail.example.com"));
+            rdata
+        }
+        _ => panic!("Unsupported QTYPE"),
+    };
+    answer.extend_from_slice(&(rdata.len() as u16).to_be_bytes());
+    answer.extend_from_slice(&rdata);
     answer
+}
+
+fn encode_domain_name(domain: &str) -> Vec<u8> {
+    let mut result = Vec::new();
+    
+    for part in domain.split('.') {
+        result.push(part.len() as u8);
+        result.extend_from_slice(part.as_bytes());
+    }
+    result.push(0);
+    result
 }
 
 fn main() -> std::io::Result<()> {
@@ -101,10 +122,10 @@ fn main() -> std::io::Result<()> {
                     println!("Parsed question: QNAME={}, QTYPE={}, QCLASS={}",
                               question.qname, question.qtype, question.qclass);
 
-                    if question.qtype == 1 && question.qclass == 1 {
+                    if question.qclass == 1 && question.qtype == 1 || question.qtype == 5 || question.qtype == 15 {
                         response.extend_from_slice(&build_dns_header(header.id, 0));
                         response.extend_from_slice(&buf[12..q_end]);
-                        response.extend_from_slice(&build_dns_answer());
+                        response.extend_from_slice(&build_dns_answer(question.qtype));
                     } else {
                         response.extend_from_slice(&build_dns_header(header.id, 4));
                     }

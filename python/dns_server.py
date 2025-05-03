@@ -48,14 +48,30 @@ def parse_dns_question(data, offset):
     except:
         return None, offset
 
-def build_dns_answer():
+def build_dns_answer(qtype):
     name = struct.pack(">H", 0xc00c)  
-    qtype = 1
     qclass = 1
     ttl = 3600
-    rdlength = 4
-    rdata = struct.pack(">BBBB", 93, 184, 216, 34)  
+    if qtype == 1:
+        rdlength = 4
+        rdata = struct.pack(">BBBB", 94, 184, 216, 34)
+    elif qtype == 5:
+        rdata = encode_domain_name("example.com")
+        rdlength = len(rdata)
+    elif qtype == 15:
+        rdata = struct.pack(">H", 10) + encode_domain_name("mail.exmaple.com")
+        rdlength = len(rdata)
+    else:
+        raise ValueError("Unsupported QTYPE")  
     return struct.pack(">HHHIH", 0xc00c, qtype, qclass, ttl, rdlength) + rdata
+
+def encode_domain_name(domain):
+    parts = domain.split(".")
+    result = b""
+    for part in parts:
+        result += bytes([len(part)]) + part.encode("ascii")
+    result += b"\x00"
+    return result
 
 def main():
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -82,10 +98,10 @@ def main():
             print(f"Parsed question: QNAME={question['qname']}, QTYPE={question['qtype']}, QCLASS={question['qclass']}")
             
             response = build_dns_header(header["id"], rcode=4)
-            if question["qtype"] == 1 and question["qclass"] == 1:
+            if question["qclass"] == 1 and question["qtype"] in [1, 5, 15]:
                 response = build_dns_header(header["id"])
                 response += data[12:q_end]
-                response += build_dns_answer()
+                response += build_dns_answer(question["qtype"])
                 
             print(f"Sending response: {response.hex()}")
             server_socket.sendto(response, client_addr)
