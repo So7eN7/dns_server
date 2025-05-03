@@ -44,6 +44,15 @@ def parse_dns_question(data, offset):
         "qclass": qclass
     }, offset
 
+def build_dns_answer():
+    name = struct.pack(">H", 0xc00c)  # Pointer to QNAME
+    qtype = 1
+    qclass = 1
+    ttl = 3600
+    rdlength = 4
+    rdata = struct.pack(">BBBB", 93, 184, 216, 34)  # 93.184.216.34
+    return struct.pack(">HHHIH", 0xc00c, qtype, qclass, ttl, rdlength) + rdata
+
 def main():
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -60,15 +69,15 @@ def main():
                 header = parse_dns_header(data)
                 print(f"Parsed header: ID={header['id']}, QR={header['qr']}, QDCOUNT={header['qdcount']}")
                 
-                response = build_dns_header(header["id"])
-                print(f"Sending response header: {response.hex()}")
-                server_socket.sendto(response, client_socket)
-
                 if header["qdcount"] > 0:
-                    question, _ = parse_dns_question(data, 12)
+                    question, q_end = parse_dns_question(data, 12)
                     print(f"Parsed question: QNAME={question['qname']}, QTYPE={question['qtype']}, QCLASS={question['qclass']}")
 
-            server_socket.sendto(data, client_socket)
+                    response = build_dns_header(header["id"])
+                    response += data[12:q_end]  
+                    response += build_dns_answer()
+                    print(f"Sending response: {response.hex()}")                  
+                    server_socket.sendto(response, client_socket)
         except Exception as e:
             print(f"Error: {e}")
 

@@ -70,6 +70,17 @@ fn parse_dns_question(data: &[u8], mut offset: usize) -> Option<(DnsQuestion, us
     Some((DnsQuestion { qname, qtype, qclass }, offset))
 }
 
+fn build_dns_answer() -> Vec<u8> {
+    let mut answer = Vec::new();
+    answer.extend_from_slice(&0xc00c_u16.to_be_bytes());
+    answer.extend_from_slice(&1u16.to_be_bytes()); 
+    answer.extend_from_slice(&1u16.to_be_bytes()); 
+    answer.extend_from_slice(&3600u32.to_be_bytes()); 
+    answer.extend_from_slice(&4u16.to_be_bytes()); 
+    answer.extend_from_slice(&[93, 184, 216, 34]);
+    answer
+}
+
 fn main() -> std::io::Result<()> {
     let socket = UdpSocket::bind(ADDR)?;
     println!("Listening on {}", ADDR);
@@ -84,18 +95,20 @@ fn main() -> std::io::Result<()> {
             println!("Parsed header: ID={}, QR={}, QDCOUNT={}", 
                       header.id, header.qr, header.qdcount);
 
-            let response = build_dns_header(header.id);
-            println!("Sending response header: {:x?}", response);
-            socket.send_to(&response, src)?;
-
             if header.qdcount > 0 {
-                if let Some((question, _)) = parse_dns_question(&buf[..amt], 12) {
+                if let Some((question, q_end)) = parse_dns_question(&buf[..amt], 12) {
                     println!("Parsed question: QNAME={}, QTYPE={}, QCLASS={}",
                               question.qname, question.qtype, question.qclass);
+            
+                    let mut response = Vec::new();
+                    response.extend_from_slice(&build_dns_header(header.id));
+                    response.extend_from_slice(&buf[12..q_end]);
+                    response.extend_from_slice(&build_dns_answer());
+                    println!("Sending response: {:x?}", response);
+                    socket.send_to(&response, src)?;
                 }
             }
         }
     
-        socket.send_to(&buf[..amt], src)?;
     }
 }
