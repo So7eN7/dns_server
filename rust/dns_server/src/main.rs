@@ -1,4 +1,5 @@
-use std::net::UdpSocket;
+use tokio::net::{TcpListener, UdpSocket};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const ADDR: &str = "localhost:2053";
 
@@ -102,46 +103,81 @@ fn encode_domain_name(domain: &str) -> Vec<u8> {
     result
 }
 
-fn main() -> std::io::Result<()> {
-    let socket = UdpSocket::bind(ADDR)?;
-    println!("Listening on {}", ADDR);
+fn process_dns_packet(data: &[u8]) -> Option<Vec<u8>> {
+    let mut response = Vec::new();
+    if let Some(header) = parse_dns_header(&data) {
+        println!(
+            "Parsed header: ID={}, QR={}, QDCOUNT={}",
+            header.id, header.qr, header.qdcount
+        );
+    if header.qdcount > 0 {
+            if let Some((question, q_end)) = parse_dns_question(&data, 12) {
+                println!(
+                    "Parsed question: QNAME={}, QTYPE={}, QCLASS={}",
+                    question.qname, question.qtype, question.qclass
+                );
 
-    let mut buf = [0; 1024];
-
-    loop {
-        let (amt, src) = socket.recv_from(&mut buf)?;
-        println!("Received {} bytes from {}: {:x?}", amt, src, &buf[..amt]);
-
-        let mut response = Vec::new();
-        if let Some(header) = parse_dns_header(&buf[..amt]) {
-            println!("Parsed header: ID={}, QR={}, QDCOUNT={}", 
-                      header.id, header.qr, header.qdcount);
-
-            if header.qdcount > 0 {
-                if let Some((question, q_end)) = parse_dns_question(&buf[..amt], 12) {
-                    println!("Parsed question: QNAME={}, QTYPE={}, QCLASS={}",
-                              question.qname, question.qtype, question.qclass);
-
-                    if question.qclass == 1 && question.qtype == 1 || question.qtype == 5 || question.qtype == 15 {
-                        response.extend_from_slice(&build_dns_header(header.id, 0));
-                        response.extend_from_slice(&buf[12..q_end]);
-                        response.extend_from_slice(&build_dns_answer(question.qtype));
-                    } else {
-                        response.extend_from_slice(&build_dns_header(header.id, 4));
-                    }
+                if question.qclass == 1 && (question.qtype == 1 || question.qtype == 5 || question.qtype == 15) {
+                    response.extend_from_slice(&build_dns_header(header.id, 0));
+                    response.extend_from_slice(&data[12..q_end]);
+                    response.extend_from_slice(&build_dns_answer(question.qtype));
                 } else {
-                    println!("Invalid question");
-                    continue;
+                    response.extend_from_slice(&build_dns_header(header.id, 4));
                 }
-            } else {
-                println!("No questions");
-                continue;
+                return Some(response);
             }
-        } else {
-            println!("Invalid packet");
-            continue;
         }
-        println!("Sending response: {:x?}", response);
-        socket.send_to(&response, src)?;
     }
+    None
+}
+
+
+#[tokio::main]
+
+async fn main() -> std::io::Result<()> {
+    let udp_task = tokio::spawn(async {
+        let socket = UdpSocket::bind(ADDR).await.unwrap();
+        println!("UDP server listening on localhost:2053");
+        let mut buf = [0; 1024];
+        loop {
+            let (amt, src) = socket.recv_from(&mut buf).await.unwrap();
+            println!("UDP: Received {} bytes from {}: {:x?}", amt, src, &buf[..amt]);
+            if let Some(response) = process_dns_packet(&buf[..amt]) {
+                println!("UDP: Sending response: {:x?}", response);
+                socket.send_to(&response, src).await.unwrap();
+            }
+        }
+    });
+
+    let tcp_task = tokio::spawn(async {
+        let listener = TcpListener::bind(ADDR).await.unwrap();
+        println!("TCP server listening on localhost:2053");
+        loop {
+            let (mut socket, addr) = listener.accept().await.unwrap();
+            println!("TCP: New connection from {}", addr);
+            tokio::spawn(async move {
+                let mut length_buf = [0; 2];
+                if socket.read_exact(&mut length_buf).await.is_err() {
+                    println!("TCP: Invalid length prefix");
+                    return;
+                }
+                let length = u16::from_be_bytes(length_buf) as usize;
+                let mut buf = vec![0; length];
+                if socket.read_exact(&mut buf).await.is_err() {
+                    println!("TCP: Incomplete packet");
+                    return;
+                }
+                println!("TCP: Received {} bytes from {}: {:x?}", length, addr, &buf);
+                if let Some(mut response) = process_dns_packet(&buf) {
+                    let mut response_with_length = (response.len() as u16).to_be_bytes().to_vec();
+                    response_with_length.append(&mut response);
+                    println!("TCP: Sending response: {:x?}", response_with_length);
+                    socket.write_all(&response_with_length).await.unwrap();
+                }
+            });
+        }
+    });
+
+    tokio::try_join!(udp_task, tcp_task)?;
+    Ok(())
 }
