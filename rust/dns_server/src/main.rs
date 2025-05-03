@@ -25,11 +25,11 @@ fn parse_dns_header(data: &[u8]) -> Option<DnsHeader> {
    Some(DnsHeader { id, qr, qdcount })
 }
 
-fn build_dns_header(query_id: u16) -> [u8; 12] {
+fn build_dns_header(query_id: u16, rcode: u16) -> [u8; 12] {
     let id = query_id.to_be_bytes();
-    let flags = (1u16 << 15).to_be_bytes();
-    let qdcount = 1u16.to_be_bytes();
-    let ancount = 1u16.to_be_bytes();
+    let flags = ((1u16 << 15) | rcode).to_be_bytes();
+    let qdcount = if rcode == 0 { 1u16.to_be_bytes() } else { 0u16.to_be_bytes() };
+    let ancount = if rcode == 0 { 1u16.to_be_bytes() } else { 0u16.to_be_bytes() };
     let nscount = 0u16.to_be_bytes();
     let arcount = 0u16.to_be_bytes();
     [
@@ -91,6 +91,7 @@ fn main() -> std::io::Result<()> {
         let (amt, src) = socket.recv_from(&mut buf)?;
         println!("Received {} bytes from {}: {:x?}", amt, src, &buf[..amt]);
 
+        let mut response = Vec::new();
         if let Some(header) = parse_dns_header(&buf[..amt]) {
             println!("Parsed header: ID={}, QR={}, QDCOUNT={}", 
                       header.id, header.qr, header.qdcount);
@@ -99,16 +100,27 @@ fn main() -> std::io::Result<()> {
                 if let Some((question, q_end)) = parse_dns_question(&buf[..amt], 12) {
                     println!("Parsed question: QNAME={}, QTYPE={}, QCLASS={}",
                               question.qname, question.qtype, question.qclass);
-            
-                    let mut response = Vec::new();
-                    response.extend_from_slice(&build_dns_header(header.id));
-                    response.extend_from_slice(&buf[12..q_end]);
-                    response.extend_from_slice(&build_dns_answer());
-                    println!("Sending response: {:x?}", response);
-                    socket.send_to(&response, src)?;
+
+                    if question.qtype == 1 && question.qclass == 1 {
+                        response.extend_from_slice(&build_dns_header(header.id, 0));
+                        response.extend_from_slice(&buf[12..q_end]);
+                        response.extend_from_slice(&build_dns_answer());
+                    } else {
+                        response.extend_from_slice(&build_dns_header(header.id, 4));
+                    }
+                } else {
+                    println!("Invalid question");
+                    continue;
                 }
+            } else {
+                println!("No questions");
+                continue;
             }
+        } else {
+            println!("Invalid packet");
+            continue;
         }
-    
+        println!("Sending response: {:x?}", response);
+        socket.send_to(&response, src)?;
     }
 }
