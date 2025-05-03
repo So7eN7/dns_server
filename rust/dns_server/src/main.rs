@@ -25,6 +25,23 @@ fn parse_dns_header(data: &[u8]) -> Option<DnsHeader> {
    Some(DnsHeader { id, qr, qdcount })
 }
 
+fn build_dns_header(query_id: u16) -> [u8; 12] {
+    let id = query_id.to_be_bytes();
+    let flags = (1u16 << 15).to_be_bytes();
+    let qdcount = 1u16.to_be_bytes();
+    let ancount = 1u16.to_be_bytes();
+    let nscount = 0u16.to_be_bytes();
+    let arcount = 0u16.to_be_bytes();
+    [
+        id[0], id[1],
+        flags[0], flags[1],
+        qdcount[0], qdcount[1],
+        ancount[0], ancount[1],
+        nscount[0], nscount[1],
+        arcount[0], arcount[1],
+    ]
+}
+
 fn parse_dns_question(data: &[u8], mut offset: usize) -> Option<(DnsQuestion, usize)> {
     let mut labels = Vec::new();
     while offset < data.len() {
@@ -66,6 +83,10 @@ fn main() -> std::io::Result<()> {
         if let Some(header) = parse_dns_header(&buf[..amt]) {
             println!("Parsed header: ID={}, QR={}, QDCOUNT={}", 
                       header.id, header.qr, header.qdcount);
+
+            let response = build_dns_header(header.id);
+            println!("Sending response header: {:x?}", response);
+            socket.send_to(&response, src)?;
 
             if header.qdcount > 0 {
                 if let Some((question, _)) = parse_dns_question(&buf[..amt], 12) {
