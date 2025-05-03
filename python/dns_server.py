@@ -13,6 +13,15 @@ def parse_dns_header(data):
         "qdcount": qdcount
     }
 
+def build_dns_header(query_id):
+    id = query_id
+    flags = (1 << 15)
+    qdcount = 1 
+    ancount = 1 
+    nscount = 0
+    arcount = 0
+    return struct.pack(">HHHHHH", id, flags, qdcount, ancount, nscount, arcount)
+
 def parse_dns_question(data, offset):
     labels = []
     while True:
@@ -50,7 +59,11 @@ def main():
             if len(data) >= 12:
                 header = parse_dns_header(data)
                 print(f"Parsed header: ID={header['id']}, QR={header['qr']}, QDCOUNT={header['qdcount']}")
-            
+                
+                response = build_dns_header(header["id"])
+                print(f"Sending response header: {response.hex()}")
+                server_socket.sendto(response, client_socket)
+
                 if header["qdcount"] > 0:
                     question, _ = parse_dns_question(data, 12)
                     print(f"Parsed question: QNAME={question['qname']}, QTYPE={question['qtype']}, QCLASS={question['qclass']}")
