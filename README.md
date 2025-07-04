@@ -1,6 +1,7 @@
 # DNS Server Project
 
 This project implements a **DNS server** in **Python** and **Rust** that handles **A**, **MX**, and **CNAME** record queries over **UDP** and **TCP** on `localhost:2053`.
+There is also a database branch that uses a SQlite database for records.
 
 ## Running the server
 ### Python3
